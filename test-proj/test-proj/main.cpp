@@ -8,43 +8,110 @@
 
 using namespace std;
 
-
-/**
- * Auto-generated code below aims at helping you parse
- * the standard input according to the problem statement.
- **/
-
 int main()
 {
+	bool firstCycle = true;
+	bool initStartingPoint = false;
+	bool usedBoost = false;
 
-    // game loop
-    while (1) {
-        int x;
-        int y;
-        int nextCheckpointX; // x position of the next check point
-        int nextCheckpointY; // y position of the next check point
-        int nextCheckpointDist; // distance to the next checkpoint
-        int nextCheckpointAngle; // angle between your pod orientation and the direction of the next checkpoint
-        cin >> x >> y >> nextCheckpointX >> nextCheckpointY >> nextCheckpointDist >> nextCheckpointAngle; cin.ignore();
-        int opponentX;
-        int opponentY;
-        cin >> opponentX >> opponentY; cin.ignore();
+	int maxDist = -300000; // distance to the next checkpoint
+	int startX = -1, startY = -1;
+	int lastX = -1, lastY = -1;
+	int optimX, optimY;
 
-        // Write an action using cout. DON'T FORGET THE "<< endl"
-        // To debug: cerr << "Debug messages..." << endl;
-        int thrust;
+	const int thresholdDistForFirstBoost = 1000;
 
-        double angleFactor = cos(nextCheckpointAngle * PI / 180.0);
-        if (angleFactor < 0.0)
-        {
-            angleFactor = 0.0f; // clamping negative cos to 0.0
-        }
+	int x;
+	int y;
+	int nextCheckpointX; // x position of the next check point
+	int nextCheckpointY; // y position of the next check point
+	int nextCheckpointDist; // distance to the next checkpoint
+	int nextCheckpointAngle; // angle between your pod orientation and the direction of the next checkpoint
+	int opponentX;
+	int opponentY;
 
-        thrust = static_cast<int>(std::max(1.0, 100 * angleFactor));
+	int thrust;
+	bool boost = false;
+	double angleFactor;
 
-        // You have to output the target position
-        // followed by the power (0 <= thrust <= 100)
-        // i.e.: "x y thrust"
-        cout << nextCheckpointX << " " << nextCheckpointY << " " << thrust << endl;
-    }
+	// game loop
+	while (1) {
+
+		cin >> x >> y >> nextCheckpointX >> nextCheckpointY >> nextCheckpointDist >> nextCheckpointAngle; cin.ignore();
+		cin >> opponentX >> opponentY; cin.ignore();
+
+		// determine the first time we head towards a checkpoints we already visited
+		if (lastX != nextCheckpointX && lastY != nextCheckpointY
+			&& startX == nextCheckpointX && startY == nextCheckpointY)
+		{
+			// we finished full cycle
+			firstCycle = false;
+		}
+		lastX = nextCheckpointX;
+		lastY = nextCheckpointY;
+
+		// initializing startX so we can determine later that the cycle of checkpoints has finished
+		if (!initStartingPoint)
+		{
+			startX = nextCheckpointX;
+			startY = nextCheckpointY;
+			initStartingPoint = true;
+		}
+
+		// during the first cycle also determine the longest distance between two checkpoints
+		// and save their position so that we know when it's optimal to use BOOST
+		if (nextCheckpointDist > maxDist)
+		{
+			maxDist = nextCheckpointDist;
+			optimX = nextCheckpointX;
+			optimY = nextCheckpointY;
+		}
+
+		// Write an action using cout. DON'T FORGET THE "<< endl"
+		// To debug: cerr << "Debug messages..." << endl;
+
+		double cosine = cos(nextCheckpointAngle * PI / 180.0);
+		// slow down before reaching a checkpoint in order to avoid big curves
+		if (nextCheckpointDist < 1000)
+		{
+			angleFactor = 0.5;
+		}
+		else
+			if (nextCheckpointAngle <= 90 && nextCheckpointAngle >= -90)
+			{
+				angleFactor = 1.0;
+			}
+			else
+			{
+				angleFactor = 0.0;
+			}
+
+		// try to use boost
+		// we want to boost when the angle between pod orientation and the next checkpoint is as small as possible
+		double thresholdAngleFactor = 0.95; // plus epsilon just in case
+		cerr << usedBoost << " " << firstCycle << " " << optimX << " " << optimY << " " << cosine << " " << nextCheckpointDist << " " << angleFactor << endl;
+		if (!usedBoost && !firstCycle && optimX == nextCheckpointX && optimY == nextCheckpointY && cosine >= thresholdAngleFactor)
+		{
+			boost = true;
+			usedBoost = true;
+		}
+		else
+		{
+			thrust = static_cast<int>(100 * angleFactor);
+		}
+
+		// You have to output the target position
+		// followed by the power (0 <= thrust <= 100)
+		// i.e.: "x y thrust"
+		cout << nextCheckpointX << " " << nextCheckpointY << " ";
+		if (boost)
+		{
+			cout << "BOOST" << endl;
+			boost = false;
+		}
+		else
+		{
+			cout << thrust << endl;
+		}
+	}
 }
