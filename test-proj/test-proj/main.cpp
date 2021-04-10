@@ -21,6 +21,8 @@ double vec_length(double x, double y)
 	return std::sqrt(x * x + y * y);
 }
 
+
+
 // Helper class used to keep track of the checkpoint sequence
 // so we can do clever tricks with information gathered after the first Lap / cycle.
 class CheckpointManager
@@ -35,7 +37,7 @@ public:
 		m_startCheckpointX = -1;
 		m_startCheckpointY = -1;
 		m_maxDist = -300000; // init max with a very small number so we guarantee to update on first check
-		m_currentCheckPointIndex = 0;
+		m_currentCheckPointIndex = -1;
 		m_arraySize = 0;
 	}
 
@@ -95,6 +97,8 @@ public:
 	{
 		m_arraySize = m_posX.size();
 		m_angles.resize(m_arraySize);
+		m_normDirVecX.resize(m_arraySize);
+		m_normDirVecY.resize(m_arraySize);
 		cerr << m_arraySize << endl;
 		for (int i = 0; i < m_arraySize; ++i)
 		{
@@ -114,6 +118,9 @@ public:
 			cos /= bc_len;
 			m_angles[i] = abs(cos);
 
+			m_normDirVecX[i] = ab_x / ab_len;
+			m_normDirVecY[i] = ab_y / ab_len;
+
 			//cerr << ab_x << " " << ab_y << " " << bc_x << " " << bc_y << " " << ab_len << " " << bc_len << " " << cos << " " << m_angles[i] << endl;
 		}
 
@@ -131,6 +138,28 @@ public:
 		return m_cycleFinished && m_optimCheckpointX == nextX && m_optimCheckpointY == nextY;
 	}
 
+	int GetCurrentCheckpointX()
+	{
+		return m_posX[m_currentCheckPointIndex];
+	}
+
+	int GetCurrentCheckpointY()
+	{
+		return m_posY[m_currentCheckPointIndex];
+	}
+
+	double GetCurrentNormDirX()
+	{
+		if (!m_cycleFinished) return 0.0;
+		return m_normDirVecX[m_currentCheckPointIndex];
+	}
+
+	double GetCurrentNormDirY()
+	{
+		if (!m_cycleFinished) return 0.0;
+		return m_normDirVecY[m_currentCheckPointIndex];
+	}
+
 	bool m_cycleFinished;
 	bool m_initStartingPoint;
 	int m_previousCheckpointX;
@@ -144,15 +173,19 @@ public:
 
 	int m_currentCheckPointIndex;
 	std::vector<double> m_angles; // stores the initial angle 
-	std::vector<int> m_posX; // stores the initial angle 
-	std::vector<int> m_posY; // stores the initial angle 
+	std::vector<int> m_posX; // stores the initial pos 
+	std::vector<int> m_posY; // stores the initial pos 
+	std::vector<double> m_normDirVecX; // stores the normalized direction vector between i'th and i+1'th checkpoints
+	std::vector<double> m_normDirVecY;
 };
 
 int main()
 {
 	const double k_CheckpointRadius = 600;
+	const int k_PodRadius = 400;
 	bool usedBoost = false;
 	const int thresholdDistForFirstBoost = 1000;
+
 
 	int x;
 	int y;
@@ -168,12 +201,15 @@ int main()
 	double angleFactor;
 
 	int prevX = -1, prevY = -1;
-
+	int enemyPrevX = -1, enemyPrevY = -1;
 	CheckpointManager ckManager;
+
+	int turnShieldEnabled = -5;
+	int turn = -1;
 
 	// game loop
 	while (1) {
-
+		++turn;
 		cin >> x >> y >> nextCheckpointX >> nextCheckpointY >> nextCheckpointDist >> nextCheckpointAngle; cin.ignore();
 		cin >> opponentX >> opponentY; cin.ignore();
 
@@ -181,6 +217,8 @@ int main()
 		{
 			prevX = x;
 			prevY = y;
+			enemyPrevX = opponentX;
+			enemyPrevY = opponentY;
 		}
 
 		ckManager.UpdateCheckpoints(nextCheckpointX, nextCheckpointY, nextCheckpointDist);
@@ -232,23 +270,58 @@ int main()
 		// in order to try to avoid curve drifting, we can send modified NextCheckPoint coordinates
 		// we want it to be speed dependent, because on high speed we will drift anyway, while on slow speed we dont want to change coordinate too much
 
-		// speed is the derivate of the position so we can take the delta pos between current and last frame
-		double deltaSpeedX = x - prevX;
-		double deltaSpeedY = y - prevY;
-		double distScale = 4.0; // empiric value, seems to work fine at 4.0
+		// speed is the derivative of the position so we can take the delta pos between current and last frame
+		int deltaSpeedX = x - prevX;
+		int deltaSpeedY = y - prevY;
+		int distScale = 4;
 
 		prevX = x;
 		prevY = y;
 
-		cout << nextCheckpointX - deltaSpeedX * distScale << " " << nextCheckpointY - deltaSpeedY * distScale << " ";
-		if (boost)
+		int offX = nextCheckpointX - deltaSpeedX * distScale + distScale * ckManager.GetCurrentNormDirX();
+		int offY = nextCheckpointY - deltaSpeedY * distScale + distScale * ckManager.GetCurrentNormDirY();
+
+		//cerr << nextCheckpointX << " " << nextCheckpointY << " " ;
+		cout << offX << " " << offY << " ";
+
+		// Collision prediction for the next 2 frames
+		// for now just naive shielding before collision
+		// next upgrade would be to determine when it makes sense to shield and when it's okay to take extra velocity from collision
+		int enemyDeltaSpeedX = opponentX - enemyPrevX;
+		int enemyDeltaSpeedY = opponentY - enemyPrevY;
+		enemyPrevX = opponentX;
+		enemyPrevY = opponentY;
+		bool enableShield = false;
+		for (int i = 0; i < 2; ++i)
 		{
-			cout << "BOOST" << endl;
-			boost = false;
+			int x0 = x + (i + 1) * deltaSpeedX;
+			int y0 = y + (i + 1) * deltaSpeedY;
+			int x1 = opponentX + (i + 1) * enemyDeltaSpeedX;
+			int y1 = opponentY + (i + 1) * enemyDeltaSpeedY;
+			int dx = x1 - x0;
+			int dy = y1 - y0;
+			int distSq = dx * dx + dy * dy;
+			cerr << distSq << " ... " << 4 * k_PodRadius * k_PodRadius << endl;
+			if (dx * dx + dy * dy <= 4 * k_PodRadius * k_PodRadius)
+			{
+				enableShield = true;
+			}
+		}
+
+		if (enableShield && (turn - turnShieldEnabled) > 3)
+		{
+			cout << "SHIELD" << endl;
+			turnShieldEnabled = turn;
 		}
 		else
-		{
-			cout << thrust << endl;
-		}
+			if (boost)
+			{
+				cout << "BOOST" << endl;
+				boost = false;
+			}
+			else
+			{
+				cout << thrust << endl;
+			}
 	}
 }
