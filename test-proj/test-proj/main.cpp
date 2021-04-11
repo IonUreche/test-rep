@@ -15,94 +15,10 @@ const int k_maxCheckpoints = 8;
 const double k_CheckpointRadius = 600;
 const int k_PodRadius = 400;
 const double k_frictionfactor = 0.85;
-const int k_maxDepth = 14;
+const int k_maxDepth = 8;
 const int k_maxNumberOfNodes = 400000;
 
 // ====== helpers ============
-double clamp(double x)
-{
-	if (x > 1.0) return 1.0;
-	if (x < 0.0) return 0.0;
-	return x;
-}
-
-double vec_length(double x, double y)
-{
-	return std::sqrt(x * x + y * y);
-}
-
-int g_nrNodes = 0;
-
-struct Node
-{
-	Node()
-	{
-		parentIdx = -1;
-		nodeIdx = g_nrNodes++;
-		firstChildIdx = lastChildIdx = -1;
-		nextSiblingIdx = -1;
-		score = 0;
-		nrTimesVisited = 0;
-		thrust = 0;
-		angle = 0;
-		shieldTurn = 0;
-		usedBoost = false;
-	}
-
-	Node(Node& parent)
-	{
-		nodeIdx = g_nrNodes++;
-		parentIdx = parent.parentIdx;
-		firstChildIdx = -1;
-		nextSiblingIdx = parent.lastChildIdx;
-		parent.lastChildIdx = nodeIdx;
-		if (parent.firstChildIdx == -1)
-		{
-			parent.firstChildIdx = nodeIdx;
-		}
-		score = 0;
-		nrTimesVisited = 0;
-		thrust = 0;
-		angle = 0;
-		shieldTurn = 0;
-		usedBoost = false;
-	}
-
-	// tree specific vars
-	int parentIdx;
-	int nodeIdx;
-	int firstChildIdx;
-	int lastChildIdx;
-	int nextSiblingIdx;
-
-	// scoring vars
-	double score;
-	int nrTimesVisited;
-
-	// simulation vars
-	int thrust;
-	int angle;
-	int shieldTurn;
-	bool usedBoost;
-};
-
-//struct Move
-//{
-//	int angle;
-//};
-
-double g_angles[k_maxCheckpoints]; // stores the initial angle 
-int g_checkPointPosX[k_maxCheckpoints];
-int g_checkPointPosY[k_maxCheckpoints];
-double g_normDirVecX[k_maxCheckpoints]; // stores the normalized direction vector between i'th and i+1'th checkpoints
-double g_normDirVecY[k_maxCheckpoints];
-
-int g_optimalCheckpointId = -1;
-int g_nrLaps = 0;
-int g_nrCheckpoints = 0;
-int g_turn = -1;
-int g_currentLap = 0;
-
 int SquaredIntDistance(int x0, int y0, int x1, int y1)
 {
 	int dx = (x0 - x1);
@@ -119,52 +35,135 @@ double vec_dot(int x0, int y0, int x1, int y1)
 	cos /= l2;
 	return abs(cos);
 }
+// random number generator
+static unsigned long x = 123456789, y = 362436069, z = 521288629;
 
-void ComputeOptimalBoostCheckpointId()
+unsigned long xorshf96(void) {          //period 2^96-1
+	unsigned long t;
+	x ^= x << 16;
+	x ^= x >> 5;
+	x ^= x << 1;
+
+	t = x;
+	x = y;
+	y = z;
+	z = t ^ x ^ y;
+
+	return z;
+}
+
+int GetRand(int mod)
 {
-	g_optimalCheckpointId = 0;
-	int maxDist = SquaredIntDistance(g_checkPointPosX[0], g_checkPointPosY[0], g_checkPointPosX[g_nrCheckpoints - 1], g_checkPointPosY[g_nrCheckpoints - 1]);
-	for (int i = 0; i < g_nrCheckpoints - 1; ++i)
+	return xorshf96() % mod;
+}
+
+double dist(int x0, int y0, int x1, int y1)
+{
+	int dx = x0 - x1;
+	int dy = y0 - y1;
+	return sqrt(dx * dx + dy * dy);
+}
+
+double clamp(double x)
+{
+	if (x > 1.0) return 1.0;
+	if (x < 0.0) return 0.0;
+	return x;
+}
+
+double vec_length(double x, double y)
+{
+	return std::sqrt(x * x + y * y);
+}
+
+int g_nrNodes = 0;
+
+struct Node
+{
+	// will use this for root nodes
+	void InitRoot()
 	{
-		int dist = SquaredIntDistance(g_checkPointPosX[i], g_checkPointPosY[i], g_checkPointPosX[i + 1], g_checkPointPosY[i + 1]);
-		if (dist > maxDist)
+		parentIdx = -1;
+		nodeIdx = g_nrNodes++;
+		firstChildIdx = lastChildIdx = -1;
+		nextSiblingIdx = -1;
+		score = 0;
+		nrTimesVisited = 0;
+		//thrust = 0;
+		//angle = 0;
+		//shieldTurn = 0;
+		//usedBoost = false;
+	}
+
+	// will use this for child nodes
+	void InitChild(Node& parent)
+	{
+		nodeIdx = g_nrNodes++;
+		parentIdx = parent.nodeIdx;
+		firstChildIdx = -1;
+		lastChildIdx = -1;
+		nextSiblingIdx = parent.lastChildIdx;
+		parent.lastChildIdx = nodeIdx;
+		if (parent.firstChildIdx == -1)
 		{
-			maxDist = dist;
-			g_optimalCheckpointId = i;
+			parent.firstChildIdx = nodeIdx;
 		}
+		score = 0;
+		nrTimesVisited = 0;
+		//thrust = 0;
+		//angle = 0;
+		//shieldTurn = 0;
+		//usedBoost = false;
 	}
-}
 
-// computing cosine of the angle between vectors formed by (previous, current) and (current, next) checkpoints
-// the idea is to have a linear slowdown factor with starting distance as a function of cos(angle)
-// For example: if the next checkpoint and and the one after are on the same line as your current moving direction, you dont want to slow down at all
-// as oposed to the case when the winding angle is big and if you dont slow down early, the moving trajectory will be a long curve
-void ComputeAngles()
-{
-	for (int i = 0; i < g_nrCheckpoints; ++i)
+	void ApplyRandomMove()
 	{
-		int j = (i + 1) % g_nrCheckpoints;
-		int k = (i + 2) % g_nrCheckpoints;
+		move.thrust = GetRand(100);
 
-		double ab_x = g_checkPointPosX[j] - g_checkPointPosX[i]; // vector AB
-		double ab_y = g_checkPointPosY[j] - g_checkPointPosY[i];
-
-		double bc_x = g_checkPointPosX[k] - g_checkPointPosX[j]; // vector BC
-		double bc_y = g_checkPointPosY[k] - g_checkPointPosY[j];
-
-		double ab_len = vec_length(ab_x, ab_y);
-		double bc_len = vec_length(bc_x, bc_y);
-		double cos = (ab_x * bc_x + ab_y * bc_y);
-		cos /= ab_len;
-		cos /= bc_len;
-		g_angles[i] = abs(cos);
-
-		g_normDirVecX[i] = ab_x / ab_len;
-		g_normDirVecY[i] = ab_y / ab_len;
-
-		//cerr << ab_x << " " << ab_y << " " << bc_x << " " << bc_y << " " << ab_len << " " << bc_len << " " << cos << " " << m_angles[i] << endl;
+		// shieldTurn;
+		// usedBoost;
 	}
-}
+
+	struct Move
+	{
+		int thrust = 0;
+		//int angle;
+		//int shieldTurn;
+		//bool usedBoost;
+	};
+
+	// tree specific vars
+	int parentIdx;
+	int nodeIdx;
+	int firstChildIdx;
+	int lastChildIdx;
+	int nextSiblingIdx;
+
+	// scoring vars
+	double score;
+	int nrTimesVisited;
+	int bestScoreChildIdx;
+
+	// simulation vars
+	Move move;
+
+	double traveledDistToNextCheckPoint = 0.0;
+	int nrReachedCheckpoints = 0;
+};
+
+Node g_nodes[k_maxNumberOfNodes];
+
+double g_angles[k_maxCheckpoints]; // stores the initial angle 
+int g_checkPointPosX[k_maxCheckpoints];
+int g_checkPointPosY[k_maxCheckpoints];
+double g_normDirVecX[k_maxCheckpoints]; // stores the normalized direction vector between i'th and i+1'th checkpoints
+double g_normDirVecY[k_maxCheckpoints];
+
+int g_optimalCheckpointId = -1;
+int g_nrLaps = 0;
+int g_nrCheckpoints = 0;
+int g_turn = -1;
+int g_currentLap = 0;
 
 struct Pod
 {
@@ -288,6 +287,12 @@ struct Pod
 		//cerr << " #\n";
 	}
 
+	double GetTargetPos(int coord)
+	{
+		if (coord == 0) return g_checkPointPosX[nextCheckPointId];
+		return g_checkPointPosY[nextCheckPointId];
+	}
+
 	int GetAdjustedCheckpoint(int coord)
 	{
 		const int distScale = 3;
@@ -310,6 +315,78 @@ struct Pod
 		}
 	}
 
+	void ApplyMove(Node::Move& move)
+	{
+		thrust = move.thrust;
+	}
+
+	void ApplyMove(Node& node)
+	{
+		// simulating pod's movement based on expert rules
+		// 1. rotation: the facing vector is the normalized speed vector
+		double vlen = vec_length(vx, vy);
+		vlen = std::max(1e-3, vlen);
+		double fx = vx / vlen;
+		double fy = vy / vlen;
+		//cerr << "vxy vec " << vx << ' ' << vy << " $ ";
+		//cerr << "f vec " << fx << ' ' << fy << " $ ";
+
+		// determine the angle between the target position and facing direction
+		double tx = GetTargetPos(0) - x;
+		double ty = GetTargetPos(1) - y;
+		double vlen2 = vec_length(tx, ty);
+		tx /= vlen2; // normalize the target vector
+		ty /= vlen2;
+		double cosine = vec_dot(fx, fy, tx, ty);
+		double alpha = acos(cosine);
+		if (ty < 0.0) alpha = -alpha;
+		//cerr << arc << " ";
+		// clamp to [-18, 18] degrees
+		alpha = std::min(18.0, std::max(-18.0, (alpha * 180.0 / PI)));
+		angle = (angle + (int)(alpha)+360) % 360; // update the pod's absolute angle
+		//cerr << "t vec " << tx << ' ' << ty << ' ' << alpha << " $ ";
+		// determine the new facing vector
+		double rad_angle = angle * PI / 180.0;
+		double fx2 = cos(rad_angle);
+		double fy2 = sin(rad_angle);
+		//cerr << "new facing: " << fx2 << " " << fy2 << '\n';
+
+		// 2. Acceleration
+		vx += fx2 * node.move.thrust;
+		vy += fy2 * node.move.thrust;
+
+		//cerr << "acc : " << node.move.thrust << '\n';
+
+		// 3. Movement
+		x = (int)std::round(x + vx);
+		y = (int)std::round(y + vy);
+
+		//cerr << "vxy before : " << vx << ' ' << vy << '\n';
+
+		//cerr << "vxy after : " << vx << ' ' << vy << '\n';
+
+		// 4. Check if we reached the target checkpoint
+		double distToCheckPoint = dist(x, y, g_checkPointPosX[nextCheckPointId], g_checkPointPosY[nextCheckPointId]);
+		//cerr << "dist to check : " << distToCheckPoint << '\n';
+		if (distToCheckPoint < k_CheckpointRadius)
+		{
+			++nrReachedCheckpoints;
+			nextCheckPointId = (nextCheckPointId + 1) % g_nrCheckpoints;
+			traveledDistToNextCheckPoint = distToCheckPoint;
+		}
+		else
+		{
+			traveledDistToNextCheckPoint += vec_length(vx, vy);
+		}
+
+		// 5. friction
+		vx = vx * k_frictionfactor;
+		vy = vy * k_frictionfactor;
+
+		node.traveledDistToNextCheckPoint = traveledDistToNextCheckPoint;
+		node.nrReachedCheckpoints = nrReachedCheckpoints;
+	}
+
 	int x, y;
 	int vx, vy;
 	int angle;
@@ -324,46 +401,160 @@ struct Pod
 	double angleFactor;
 	int previousCheckPointId = -1;
 	int currentLap = 0;
+
+	int nrReachedCheckpoints = 0;
+	double traveledDistToNextCheckPoint = 0.0;
 };
+
+Pod g_pods[k_nrPods];
+Pod s_pods[k_nrPods];
+
+const int k_childsPerNode = 10;
+const int k_maxVisitsWhenExploring = 5;
+const int k_scoreForReachingCheckpoint = 18358; // diagonal of the viewport, we want reaching checkpoint to be worth more than just distance traveled
+
+void InitSimulation()
+{
+	// create all Tree roots
+	for (int i = 0; i < k_nrPods; ++i)
+	{
+		g_nodes[i].InitRoot();
+	}
+}
+
+void GatherSimulationResults()
+{
+	// apply best score moves to the friendly pods
+	for (int i = 0; i < 2; ++i)
+	{
+		Node::Move best_move = g_nodes[g_nodes[i].bestScoreChildIdx].move;
+
+		//cerr << "Best " << g_nodes[i].bestScoreChildIdx << ' ' << g_nodes[i].score << ' ' << best_move.thrust << "\n"; 
+		g_pods[i].ApplyMove(best_move);
+	}
+}
+
+
+void Simulate()
+{
+	// reset nodes
+	for (int i = 0; i < k_nrPods; ++i)
+		s_pods[i] = g_pods[i];
+
+	Node* cNode[k_nrPods]; // pointers to current nodes
+
+	for (int i = 0; i < k_nrPods; ++i)
+	{
+		cNode[i] = &g_nodes[i];
+	}
+
+	//cerr << " sim " << g_nrNodes << "\n";
+	// explore until maxDepth for each root
+	int depth = 0;
+	while (depth < k_maxDepth)
+	{
+		for (int i = 0; i < k_nrPods; ++i)
+		{
+			cNode[i]->nrTimesVisited++;
+
+			if (cNode[i]->firstChildIdx == -1)
+			{
+				// current node has no children so we want to allocate some in order to explore the random move possibilities
+				for (int k = 0; k < k_childsPerNode; ++k)
+				{
+					int nodeidx = g_nrNodes;
+					g_nodes[nodeidx].InitChild(*cNode[i]);
+					g_nodes[nodeidx].ApplyRandomMove();
+				}
+			}
+
+			// for further exploration in the first steps of the simulation, we'll take random nodes to explore
+			// after which we can start selecting them based on score computed in this 'Random phase'
+			if (cNode[i]->nrTimesVisited < k_maxVisitsWhenExploring)
+			{
+				int rnd = xorshf96() % k_childsPerNode;
+				int childIdx = cNode[i]->firstChildIdx + rnd;
+				cNode[i] = &g_nodes[childIdx];
+			}
+			else
+			{
+				// TO DO: logic for score based child selection
+				cNode[i] = &g_nodes[cNode[i]->firstChildIdx];
+			}
+			s_pods[i].ApplyMove(*cNode[i]);
+		}
+		++depth;
+	}
+
+	for (int i = 0; i < k_nrPods; ++i)
+	{
+		// bottom-up update for scores
+		int score = cNode[i]->nrReachedCheckpoints * k_scoreForReachingCheckpoint + cNode[i]->traveledDistToNextCheckPoint;
+		//cerr << score << "__";//cNode[i]->nrReachedCheckpoints << " " << cNode[i]->traveledDistToNextCheckPoint << '\n';
+		int idx = cNode[i]->nodeIdx;
+		//cerr << idx << "__";
+		while (cNode[i]->parentIdx >= 0)
+		{
+			cNode[i] = &g_nodes[cNode[i]->parentIdx];
+			if (cNode[i]->score < score)
+			{
+				cNode[i]->score = score;
+				cNode[i]->bestScoreChildIdx = idx;
+			}
+			idx = cNode[i]->nodeIdx;
+			//cerr << cNode[i]->nodeIdx << "_" << cNode[i]->score << '\n';
+		}
+	}
+}
 
 int main()
 {
-	bool usedBoost = false;
-	bool boost = false;
-
-	Pod pods[k_nrPods];
-	Pod s_pods[k_nrPods];
-
 	cin >> g_nrLaps >> g_nrCheckpoints;
 	for (int i = 0; i < g_nrCheckpoints; ++i)
 	{
 		cin >> g_checkPointPosX[i] >> g_checkPointPosY[i];
 	}
 
-	ComputeOptimalBoostCheckpointId();
-	ComputeAngles();
+	//ComputeOptimalBoostCheckpointId();
+	//ComputeAngles();
 
 	using namespace std::chrono;
 	high_resolution_clock::time_point t0, t1, t2;
 	duration<double> time0, time1;
-	double totalAllowedSimulationTime = 0.06;
+	double totalAllowedSimulationTime = 0.01;
+
+	//for (int i = 0; i < 100; ++i)
+	//{
+	//	cout << xorshf96() << ' ';
+	//}
 
 	// game loop
 	while (1) {
 		++g_turn;
-
+		g_nrNodes = 0;
 		for (int i = 0; i < k_nrPods; ++i)
 		{
-			pods[i].ReadTurnInput(cin);
+			g_pods[i].ReadTurnInput(cin);
+		}
+
+		// first turn only
+		if (g_turn == 1)
+		{
+			for (int i = 0; i < 2; ++i)
+				cout << g_checkPointPosX[0] << ' ' << g_checkPointPosY[0] << ' ' << 100 << '\n';
+			continue;
 		}
 
 		t0 = high_resolution_clock::now();
+
+		InitSimulation();
 
 		do
 		{
 			t1 = high_resolution_clock::now();
 
 			// simulate
+			Simulate();
 
 			t2 = high_resolution_clock::now();
 			time0 = duration_cast<duration<double>>(t2 - t0);
@@ -371,11 +562,63 @@ int main()
 		} while (time0.count() + time1.count() < totalAllowedSimulationTime);
 		//cerr << time0.count() << '\n';
 
+		GatherSimulationResults();
+
 		for (int i = 0; i < 2; ++i)
 		{
-			pods[i].Update();
-			pods[i].PredictCollision(pods);
-			pods[i].WriteTurnOutput(cout);
+			//g_pods[i].Update();
+			//pods[i].PredictCollision(pods);
+			g_pods[i].WriteTurnOutput(cout);
 		}
 	}
+
+	return 0;
 }
+
+
+//
+//void ComputeOptimalBoostCheckpointId()
+//{
+//	g_optimalCheckpointId = 0;
+//	int maxDist = SquaredIntDistance(g_checkPointPosX[0], g_checkPointPosY[0], g_checkPointPosX[g_nrCheckpoints - 1], g_checkPointPosY[g_nrCheckpoints - 1]);
+//	for (int i = 0; i < g_nrCheckpoints - 1; ++i)
+//	{
+//		int dist = SquaredIntDistance(g_checkPointPosX[i], g_checkPointPosY[i], g_checkPointPosX[i + 1], g_checkPointPosY[i + 1]);
+//		if (dist > maxDist)
+//		{
+//			maxDist = dist;
+//			g_optimalCheckpointId = i;
+//		}
+//	}
+//}
+//
+//// computing cosine of the angle between vectors formed by (previous, current) and (current, next) checkpoints
+//// the idea is to have a linear slowdown factor with starting distance as a function of cos(angle)
+//// For example: if the next checkpoint and and the one after are on the same line as your current moving direction, you dont want to slow down at all
+//// as oposed to the case when the winding angle is big and if you dont slow down early, the moving trajectory will be a long curve
+//void ComputeAngles()
+//{
+//	for (int i = 0; i < g_nrCheckpoints; ++i)
+//	{
+//		int j = (i + 1) % g_nrCheckpoints;
+//		int k = (i + 2) % g_nrCheckpoints;
+//
+//		double ab_x = g_checkPointPosX[j] - g_checkPointPosX[i]; // vector AB
+//		double ab_y = g_checkPointPosY[j] - g_checkPointPosY[i];
+//
+//		double bc_x = g_checkPointPosX[k] - g_checkPointPosX[j]; // vector BC
+//		double bc_y = g_checkPointPosY[k] - g_checkPointPosY[j];
+//
+//		double ab_len = vec_length(ab_x, ab_y);
+//		double bc_len = vec_length(bc_x, bc_y);
+//		double cos = (ab_x * bc_x + ab_y * bc_y);
+//		cos /= ab_len;
+//		cos /= bc_len;
+//		g_angles[i] = abs(cos);
+//
+//		g_normDirVecX[i] = ab_x / ab_len;
+//		g_normDirVecY[i] = ab_y / ab_len;
+//
+//		//cerr << ab_x << " " << ab_y << " " << bc_x << " " << bc_y << " " << ab_len << " " << bc_len << " " << cos << " " << m_angles[i] << endl;
+//	}
+//}
