@@ -3,6 +3,7 @@
 #include <vector>
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 
 #define PI 3.14159265
 
@@ -14,6 +15,8 @@ const int k_maxCheckpoints = 8;
 const double k_CheckpointRadius = 600;
 const int k_PodRadius = 400;
 const double k_frictionfactor = 0.85;
+const int k_maxDepth = 14;
+const int k_maxNumberOfNodes = 400000;
 
 // ====== helpers ============
 double clamp(double x)
@@ -27,6 +30,66 @@ double vec_length(double x, double y)
 {
 	return std::sqrt(x * x + y * y);
 }
+
+int g_nrNodes = 0;
+
+struct Node
+{
+	Node()
+	{
+		parentIdx = -1;
+		nodeIdx = g_nrNodes++;
+		firstChildIdx = lastChildIdx = -1;
+		nextSiblingIdx = -1;
+		score = 0;
+		nrTimesVisited = 0;
+		thrust = 0;
+		angle = 0;
+		shieldTurn = 0;
+		usedBoost = false;
+	}
+
+	Node(Node& parent)
+	{
+		nodeIdx = g_nrNodes++;
+		parentIdx = parent.parentIdx;
+		firstChildIdx = -1;
+		nextSiblingIdx = parent.lastChildIdx;
+		parent.lastChildIdx = nodeIdx;
+		if (parent.firstChildIdx == -1)
+		{
+			parent.firstChildIdx = nodeIdx;
+		}
+		score = 0;
+		nrTimesVisited = 0;
+		thrust = 0;
+		angle = 0;
+		shieldTurn = 0;
+		usedBoost = false;
+	}
+
+	// tree specific vars
+	int parentIdx;
+	int nodeIdx;
+	int firstChildIdx;
+	int lastChildIdx;
+	int nextSiblingIdx;
+
+	// scoring vars
+	double score;
+	int nrTimesVisited;
+
+	// simulation vars
+	int thrust;
+	int angle;
+	int shieldTurn;
+	bool usedBoost;
+};
+
+//struct Move
+//{
+//	int angle;
+//};
 
 double g_angles[k_maxCheckpoints]; // stores the initial angle 
 int g_checkPointPosX[k_maxCheckpoints];
@@ -257,7 +320,6 @@ struct Pod
 	bool boostUsed = false;
 	bool useBoost = false;
 	int thrust;
-	int index;
 	int turnShieldWasEnabled = -1;
 	double angleFactor;
 	int previousCheckPointId = -1;
@@ -270,8 +332,7 @@ int main()
 	bool boost = false;
 
 	Pod pods[k_nrPods];
-	for (int i = 0; i < 4; ++i)
-		pods[i].index = i;
+	Pod s_pods[k_nrPods];
 
 	cin >> g_nrLaps >> g_nrCheckpoints;
 	for (int i = 0; i < g_nrCheckpoints; ++i)
@@ -282,13 +343,33 @@ int main()
 	ComputeOptimalBoostCheckpointId();
 	ComputeAngles();
 
+	using namespace std::chrono;
+	high_resolution_clock::time_point t0, t1, t2;
+	duration<double> time0, time1;
+	double totalAllowedSimulationTime = 0.06;
+
 	// game loop
 	while (1) {
 		++g_turn;
+
 		for (int i = 0; i < k_nrPods; ++i)
 		{
 			pods[i].ReadTurnInput(cin);
 		}
+
+		t0 = high_resolution_clock::now();
+
+		do
+		{
+			t1 = high_resolution_clock::now();
+
+			// simulate
+
+			t2 = high_resolution_clock::now();
+			time0 = duration_cast<duration<double>>(t2 - t0);
+			time1 = duration_cast<duration<double>>(t2 - t1);
+		} while (time0.count() + time1.count() < totalAllowedSimulationTime);
+		//cerr << time0.count() << '\n';
 
 		for (int i = 0; i < 2; ++i)
 		{
