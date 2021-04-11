@@ -15,7 +15,7 @@ const int k_maxCheckpoints = 8;
 const double k_CheckpointRadius = 600;
 const int k_PodRadius = 400;
 const double k_frictionfactor = 0.85;
-const int k_maxDepth = 8;
+const int k_maxDepth = 15;
 const int k_maxNumberOfNodes = 400000;
 
 // ====== helpers ============
@@ -118,8 +118,8 @@ struct Node
 
 	void ApplyRandomMove()
 	{
-		move.thrust = GetRand(100);
-
+		move.thrust = GetRand(101);
+		move.useBoost = GetRand(100) > 10;
 		// shieldTurn;
 		// usedBoost;
 	}
@@ -129,7 +129,7 @@ struct Node
 		int thrust = 0;
 		//int angle;
 		//int shieldTurn;
-		//bool usedBoost;
+		bool useBoost = false;
 	};
 
 	// tree specific vars
@@ -293,11 +293,14 @@ struct Pod
 		return g_checkPointPosY[nextCheckPointId];
 	}
 
-	int GetAdjustedCheckpoint(int coord)
+	int GetAdjustedCheckpoint(int coord, int nextId = -1, int velX = -1, int velY = -1)
 	{
+		if (nextId == -1) nextId = nextCheckPointId;
+		if (velX == -1) velX = vx;
+		if (velY == -1) velY = vy;
 		const int distScale = 3;
-		if (coord == 0) return g_checkPointPosX[nextCheckPointId] + distScale * (g_normDirVecX[nextCheckPointId] - vx);
-		return g_checkPointPosY[nextCheckPointId] + distScale * (g_normDirVecY[nextCheckPointId] - vy);
+		if (coord == 0) return g_checkPointPosX[nextId] + distScale * (g_normDirVecX[nextId] - velX);
+		return g_checkPointPosY[nextId] + distScale * (g_normDirVecY[nextId] - velY);
 	}
 
 	double GetSlowDownFactor()
@@ -318,6 +321,7 @@ struct Pod
 	void ApplyMove(Node::Move& move)
 	{
 		thrust = move.thrust;
+		useBoost = (boostUsed) ? false : move.useBoost;
 	}
 
 	void ApplyMove(Node& node)
@@ -366,7 +370,9 @@ struct Pod
 		//cerr << "vxy after : " << vx << ' ' << vy << '\n';
 
 		// 4. Check if we reached the target checkpoint
-		double distToCheckPoint = dist(x, y, g_checkPointPosX[nextCheckPointId], g_checkPointPosY[nextCheckPointId]);
+		double destX = GetAdjustedCheckpoint(0, nextCheckPointId, vx, vy);
+		double destY = GetAdjustedCheckpoint(1, nextCheckPointId, vx, vy);
+		double distToCheckPoint = dist(x, y, destX, destY);
 		//cerr << "dist to check : " << distToCheckPoint << '\n';
 		if (distToCheckPoint < k_CheckpointRadius)
 		{
@@ -478,8 +484,20 @@ void Simulate()
 			}
 			else
 			{
-				// TO DO: logic for score based child selection
-				cNode[i] = &g_nodes[cNode[i]->firstChildIdx];
+				// take the best score child, in order to exploit the more promising moves
+				int bestIdx = 0;
+				int bestScore = -1;
+				int firstChildIdx = cNode[i]->firstChildIdx;
+				for (int j = 0; j < k_childsPerNode; ++j)
+				{
+					int idx = firstChildIdx + j;
+					if (g_nodes[idx].score > bestScore)
+					{
+						bestScore = g_nodes[idx].score;
+						bestIdx = idx;
+					}
+				}
+				cNode[i] = &g_nodes[bestIdx];
 			}
 			s_pods[i].ApplyMove(*cNode[i]);
 		}
@@ -521,7 +539,7 @@ int main()
 	using namespace std::chrono;
 	high_resolution_clock::time_point t0, t1, t2;
 	duration<double> time0, time1;
-	double totalAllowedSimulationTime = 0.01;
+	double totalAllowedSimulationTime = 0.05;
 
 	//for (int i = 0; i < 100; ++i)
 	//{
